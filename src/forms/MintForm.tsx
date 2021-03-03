@@ -5,7 +5,7 @@ import { MsgExecuteContract } from "@terra-money/terra.js"
 import useNewContractMsg from "../terra/useNewContractMsg"
 import MESSAGE from "../lang/MESSAGE.json"
 import Tooltip from "../lang/Tooltip.json"
-import { MIR, UUSD } from "../constants"
+import { MIR, TRADING_HOURS, UUSD } from "../constants"
 import { plus, minus, times, div, floor, max, abs } from "../libs/math"
 import { gt, gte, lt, isFinite } from "../libs/math"
 import { capitalize } from "../libs/utils"
@@ -19,6 +19,7 @@ import calc from "../helpers/calc"
 import { useContractsAddress, useContract, useRefetch } from "../hooks"
 import { PriceKey, AssetInfoKey } from "../hooks/contractKeys"
 import { BalanceKey } from "../hooks/contractKeys"
+import useTax from "../graphql/useTax"
 import { MenuKey } from "../routes"
 
 import FormGroup from "../components/FormGroup"
@@ -26,6 +27,8 @@ import Dl from "../components/Dl"
 import Count from "../components/Count"
 import { TooltipIcon } from "../components/Tooltip"
 import Caution from "../components/Caution"
+import ExtLink from "../components/ExtLink"
+import Icon from "../components/Icon"
 import { Type } from "../pages/Mint"
 import useMintReceipt from "./receipts/useMintReceipt"
 import FormContainer from "./FormContainer"
@@ -136,7 +139,7 @@ const MintForm = ({ position, type, tab, message }: Props) => {
   const uusd = token1 === UUSD ? amount1 : "0"
 
   /* form:focus input on select asset */
-  const valueRef = useRef<HTMLInputElement>(null!)
+  const valueRef = useRef<HTMLInputElement>()
   const onSelect = (name: Key) => (token: string) => {
     const next: Partial<Record<Key, Partial<Values<Key>>>> = {
       [Key.token1]: { token2: token === token2 ? "" : token2 },
@@ -144,13 +147,13 @@ const MintForm = ({ position, type, tab, message }: Props) => {
     }
 
     setValues({ ...values, ...next[name], [name]: token })
-    !value1 && valueRef.current.focus()
+    !value1 && valueRef.current?.focus()
   }
 
   /* simulation */
   const price1 = find(priceKey, token1)
   const price2 = find(priceKey, token2)
-  const reversed = form.changed !== Key.value1
+  const reversed = !!form.changed && form.changed !== Key.value1
   const operate = type === Type.DEPOSIT || type === Type.CUSTOM ? plus : minus
   const nextCollateralAmount = max([
     operate(prevCollateral?.amount, amount1),
@@ -227,6 +230,12 @@ const MintForm = ({ position, type, tab, message }: Props) => {
   const select1 = useSelectAsset({ priceKey, balanceKey, ...config1 })
   const select2 = useSelectAsset({ priceKey, balanceKey, ...config2 })
 
+  const { getMax: getMaxAmount } = useTax()
+  const maxAmount =
+    symbol1 === UUSD
+      ? lookup(getMaxAmount(find(balanceKey, token1)), UUSD)
+      : lookup(find(balanceKey, token1), symbol1)
+
   const fields = {
     ...getFields({
       [Key.value1]: {
@@ -239,6 +248,10 @@ const MintForm = ({ position, type, tab, message }: Props) => {
           ref: valueRef,
         },
         unit: open ? select1.button : lookupSymbol(symbol1),
+        max:
+          gt(maxAmount, 0) && open
+            ? () => setValue(Key.value1, maxAmount)
+            : undefined,
         assets: select1.assets,
         help: renderBalance(getMax(token1), symbol1),
         focused: select1.isOpen,
@@ -493,6 +506,16 @@ const MintForm = ({ position, type, tab, message }: Props) => {
       ? [`Insufficient ${prevAsset.symbol} balance`]
       : undefined
 
+  const marketClosedMessage = (
+    <p className={styles.message}>
+      Only available during{" "}
+      <ExtLink href={TRADING_HOURS} className={styles.link}>
+        market hours
+      </ExtLink>
+      <Icon name="launch" size={14} />
+    </p>
+  )
+
   /* latest price */
   const { isClosed } = useLatest()
   const isMarketClosed1 = isClosed(symbol1)
@@ -500,7 +523,7 @@ const MintForm = ({ position, type, tab, message }: Props) => {
   const isMarketClosed = isMarketClosed1 || isMarketClosed2
 
   const messages = isMarketClosed
-    ? [MESSAGE.Form.Validate.LastestPrice.Closed]
+    ? [marketClosedMessage]
     : touched[Key.ratio]
     ? ratioMessages
     : close
